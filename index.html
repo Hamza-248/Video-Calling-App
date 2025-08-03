@@ -651,195 +651,167 @@
 	</div>
 
 	<script>
-		// Global variables
 		let peer = null;
 		let localStream = null;
 		let currentCall = null;
-		let isHost = false;
 		let isMuted = false;
 		let isVideoOff = false;
 
-		// Initialize PeerJS
-		function initializePeer() {
+		const micOnIcon = '<svg><use xlink:href="#icon-mic"></use></svg>';
+		const micOffIcon = '<svg><use xlink:href="#icon-mic-off"></use></svg>';
+		const videoOnIcon = '<svg><use xlink:href="#icon-video"></use></svg>';
+		const videoOffIcon = '<svg><use xlink:href="#icon-video-off"></use></svg>';
+		const mutedStatusIcon = `<div class="status-icon" id="mutedIcon"><svg><use xlink:href="#icon-mic-off"></use></svg></div>`;
+		const videoOffStatusIcon = `<div class="status-icon" id="videoOffIcon"><svg><use xlink:href="#icon-video-off"></use></svg></div>`;
+
+		// UI Elements
+		const setupSection = document.getElementById('setupSection');
+		const connectionInfo = document.getElementById('connectionInfo');
+		const videoCallView = document.getElementById('videoCallView');
+		const mainContainer = document.getElementById('mainContainer');
+		const callControls = document.getElementById('callControls');
+		const localVideo = document.getElementById('localVideo');
+		const remoteVideo = document.getElementById('remoteVideo');
+		const previewVideo = document.getElementById('previewVideo');
+		const localVideoStatus = document.getElementById('localVideoStatus');
+
+		// --- Core Logic ---
+
+		function initializePeer(id) {
 			return new Promise((resolve, reject) => {
-				// Create peer with random ID
-				peer = new Peer({
+				peer = new Peer(id, {
 					config: {
 						iceServers: [
 							{ urls: 'stun:stun.l.google.com:19302' },
 							{ urls: 'stun:stun1.l.google.com:19302' },
-							{ urls: 'stun:stun.relay.metered.ca:80' }
+							{ urls: 'stun:stun.relay.metered.ca:80' },
 						]
 					}
 				});
 
-				peer.on('open', (id) => {
-					console.log('Peer ID:', id);
-					resolve(id);
+				peer.on('open', peerId => {
+					console.log('PeerJS initialized with ID:', peerId);
+					resolve(peerId);
 				});
 
-				peer.on('error', (error) => {
-					console.error('Peer error:', error);
-					reject(error);
+				peer.on('error', err => {
+					console.error('PeerJS error:', err);
+					updateStatus(`Connection error: ${err.message}`, 'error');
+					reject(err);
 				});
 
-				// Handle incoming calls
-				peer.on('call', (call) => {
-					updateStatus('📞 Incoming call...', 'info');
-
-					// Answer the call with our stream
-					if (localStream) {
-						call.answer(localStream);
-						handleCall(call);
-					} else {
-						setupMedia().then(() => {
-							call.answer(localStream);
-							handleCall(call);
-						}).catch(err => {
-							updateStatus('Failed to access camera/microphone', 'error');
-							call.close();
-						});
-					}
+				peer.on('call', call => {
+					console.log('Incoming call');
+					updateStatus('Incoming call...', 'info');
+					call.answer(localStream);
+					handleCall(call);
 				});
-
-				peer.on('disconnected', () => {
-					updateStatus('Disconnected from signaling server', 'error');
-				});
-
-				peer.on('close', () => {
-					updateStatus('Connection closed', 'error');
-				});
-			});
-		}
-
-		async function startHost() {
-			try {
-				document.getElementById('hostBtn').innerHTML = '<span class="loading"></span> Starting...';
-				document.getElementById('hostBtn').disabled = true;
-
-				// Initialize peer connection
-				const peerId = await initializePeer();
-
-				// Setup media
-				await setupMedia();
-
-				// Show connection info
-				isHost = true;
-				document.getElementById('peerIdDisplay').textContent = peerId;
-				const shareUrl = `${window.location.origin}${window.location.pathname}?connect=${peerId}`;
-				document.getElementById('shareLink').textContent = shareUrl;
-
-				document.getElementById('setupSection').style.display = 'none';
-				document.getElementById('connectionInfo').style.display = 'block';
-				document.getElementById('hostInfo').style.display = 'block';
-
-				updateStatus('🎯 Ready! Share your Peer ID or link to start video chat', 'waiting');
-
-			} catch (error) {
-				console.error('Error starting host:', error);
-				updateStatus('Failed to start: ' + error.message, 'error');
-				document.getElementById('hostBtn').innerHTML = '🎥 Start Video Chat';
-				document.getElementById('hostBtn').disabled = false;
-			}
-		}
-
-		async function connectToPeer() {
-			const peerIdToConnect = document.getElementById('peerIdInput').value.trim();
-
-			if (!peerIdToConnect) {
-				alert('Please enter a Peer ID');
-				return;
-			}
-
-			try {
-				document.getElementById('connectBtn').innerHTML = '<span class="loading"></span> Connecting...';
-				document.getElementById('connectBtn').disabled = true;
-
-				// Initialize our peer
-				await initializePeer();
-
-				// Setup media
-				await setupMedia();
-
-				// Make the call
-				const call = peer.call(peerIdToConnect, localStream);
-				handleCall(call);
-
-				document.getElementById('setupSection').style.display = 'none';
-				updateStatus('📞 Calling peer...', 'waiting');
-
-			} catch (error) {
-				console.error('Error connecting:', error);
-				updateStatus('Failed to connect: ' + error.message, 'error');
-				document.getElementById('connectBtn').innerHTML = '📞 Connect';
-				document.getElementById('connectBtn').disabled = false;
-			}
-		}
-
-		function handleCall(call) {
-			currentCall = call;
-
-			call.on('stream', (remoteStream) => {
-				document.getElementById('remoteVideo').srcObject = remoteStream;
-				updateStatus('🎉 Connected! Enjoy your video chat', 'connected');
-
-				// Hide connection info, show video
-				document.getElementById('connectionInfo').style.display = 'none';
-				document.getElementById('videoContainer').style.display = 'grid';
-				document.getElementById('controls').style.display = 'flex';
-			});
-
-			call.on('close', () => {
-				updateStatus('📴 Call ended', 'error');
-				document.getElementById('remoteVideo').srcObject = null;
-				endCall();
-			});
-
-			call.on('error', (error) => {
-				console.error('Call error:', error);
-				updateStatus('Call error: ' + error.message, 'error');
 			});
 		}
 
 		async function setupMedia() {
 			try {
-				// Check if we're on HTTPS or localhost
-				const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-
-				if (!isSecure) {
-					throw new Error('HTTPS or localhost required for camera access');
-				}
-
 				localStream = await navigator.mediaDevices.getUserMedia({
-					video: {
-						width: { ideal: 1280 },
-						height: { ideal: 720 }
-					},
-					audio: {
-						echoCancellation: true,
-						noiseSuppression: true,
-						autoGainControl: true
-					}
+					video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+					audio: { echoCancellation: true, noiseSuppression: true }
 				});
-
-				document.getElementById('localVideo').srcObject = localStream;
-
+				previewVideo.srcObject = localStream;
+				localVideo.srcObject = localStream;
 			} catch (error) {
-				console.error('Error accessing media:', error);
-
-				let errorMessage = 'Camera/microphone error: ';
-				if (error.name === 'NotAllowedError') {
-					errorMessage += 'Permission denied. Please allow access and refresh.';
-				} else if (error.name === 'NotFoundError') {
-					errorMessage += 'No camera/microphone found.';
-				} else if (error.message.includes('HTTPS')) {
-					errorMessage += 'HTTPS required. Please use https:// or localhost';
-				} else {
-					errorMessage += error.message;
-				}
-
-				throw new Error(errorMessage);
+				console.error('Error accessing media devices.', error);
+				updateStatus('Camera/Mic access denied. Please allow access and refresh.', 'error');
+				throw error;
 			}
+		}
+
+		async function startHost() {
+			document.getElementById('hostBtn').disabled = true;
+			document.getElementById('hostBtn').innerHTML = '<span class="loading"></span>';
+			try {
+				const peerId = await initializePeer();
+				showConnectionInfo(peerId);
+			} catch (error) {
+				document.getElementById('hostBtn').disabled = false;
+				document.getElementById('hostBtn').textContent = 'Start Call';
+			}
+		}
+
+		async function connectToPeer() {
+			const peerIdToConnect = document.getElementById('peerIdInput').value.trim();
+			if (!peerIdToConnect) {
+				updateStatus('Please enter a Peer ID.', 'error');
+				return;
+			}
+
+			document.getElementById('connectBtn').disabled = true;
+			document.getElementById('connectBtn').innerHTML = '<span class="loading"></span>';
+
+			try {
+				await initializePeer(); // Initialize with a random ID
+				updateStatus(`Connecting to ${peerIdToConnect}...`, 'info');
+				const call = peer.call(peerIdToConnect, localStream);
+				handleCall(call);
+			} catch (error) {
+				document.getElementById('connectBtn').disabled = false;
+				document.getElementById('connectBtn').textContent = 'Join Call';
+			}
+		}
+
+		function handleCall(call) {
+			currentCall = call;
+			switchToCallView();
+
+			call.on('stream', remoteStream => {
+				console.log('Remote stream received');
+				remoteVideo.srcObject = remoteStream;
+				updateStatus('Connected!', 'connected');
+				setTimeout(() => document.getElementById('status').style.display = 'none', 3000);
+			});
+
+			call.on('close', () => {
+				console.log('Call closed by remote peer.');
+				endCall();
+				alert('The other user has ended the call.');
+			});
+
+			call.on('error', err => {
+				console.error('Call error:', err);
+				updateStatus(`Call error: ${err.message}`, 'error');
+			});
+		}
+
+		function endCall() {
+			if (currentCall) {
+				currentCall.close();
+				currentCall = null;
+			}
+			if (peer) {
+				peer.destroy();
+				peer = null;
+			}
+			if (localStream) {
+				localStream.getTracks().forEach(track => track.stop());
+				localStream = null;
+			}
+			location.window.href = "https://hamza-248.github.io/Video-Calling-App/";
+			// back to main view
+		}
+
+		// --- UI Updates ---
+
+		function showConnectionInfo(peerId) {
+			document.getElementById('peerIdDisplay').textContent = peerId;
+			const shareUrl = `${location.origin}${location.pathname}?connect=${peerId}`;
+			document.getElementById('shareLink').textContent = shareUrl;
+			setupSection.style.display = 'none';
+			connectionInfo.style.display = 'block';
+			updateStatus('Ready! Share your ID or link to start.', 'waiting');
+		}
+
+		function switchToCallView() {
+			mainContainer.style.display = 'none';
+			videoCallView.style.display = 'block';
+			callControls.style.display = 'flex';
 		}
 
 		function updateStatus(message, type) {
@@ -849,87 +821,102 @@
 			statusEl.style.display = 'block';
 		}
 
-		function copyPeerId() {
-			const peerId = document.getElementById('peerIdDisplay').textContent;
-			navigator.clipboard.writeText(peerId).then(() => {
-				alert('Peer ID copied! Share this with the person you want to video chat with.');
+		function copyToClipboard(elementId, buttonElement) {
+			const text = document.getElementById(elementId).textContent;
+			navigator.clipboard.writeText(text).then(() => {
+				const feedback = document.createElement('div');
+				feedback.className = 'copy-feedback';
+				feedback.textContent = 'Copied!';
+				buttonElement.appendChild(feedback);
+				setTimeout(() => {
+					feedback.style.opacity = '1';
+				}, 10);
+				setTimeout(() => {
+					feedback.style.opacity = '0';
+					setTimeout(() => feedback.remove(), 300);
+				}, 2000);
 			});
 		}
 
-		function copyLink() {
-			const link = document.getElementById('shareLink').textContent;
-			navigator.clipboard.writeText(link).then(() => {
-				alert('Link copied! Send this to anyone to start video chat instantly.');
-			});
-		}
+		// --- In-call Controls ---
 
 		function toggleMute() {
-			if (localStream) {
-				const audioTrack = localStream.getAudioTracks()[0];
-				if (audioTrack) {
-					audioTrack.enabled = !audioTrack.enabled;
-					isMuted = !audioTrack.enabled;
-					document.getElementById('muteBtn').textContent = isMuted ? '🔇 Unmute' : '🎤 Mute';
-				}
-			}
+			isMuted = !isMuted;
+			localStream.getAudioTracks()[0].enabled = !isMuted;
+			document.getElementById('muteBtn').innerHTML = isMuted ? micOffIcon : micOnIcon;
+			document.getElementById('muteBtn').classList.toggle('active', isMuted);
+			updateLocalVideoStatus();
 		}
 
 		function toggleVideo() {
-			if (localStream) {
-				const videoTrack = localStream.getVideoTracks()[0];
-				if (videoTrack) {
-					videoTrack.enabled = !videoTrack.enabled;
-					isVideoOff = !videoTrack.enabled;
-					document.getElementById('videoBtn').textContent = isVideoOff ? '📹 Video On' : '📹 Video Off';
+			isVideoOff = !isVideoOff;
+			localStream.getVideoTracks()[0].enabled = !isVideoOff;
+			document.getElementById('videoBtn').innerHTML = isVideoOff ? videoOffIcon : videoOnIcon;
+			document.getElementById('videoBtn').classList.toggle('active', isVideoOff);
+			updateLocalVideoStatus();
+		}
+
+		function updateLocalVideoStatus() {
+			let statusHTML = '';
+			if (isVideoOff) statusHTML += videoOffStatusIcon;
+			if (isMuted) statusHTML += mutedStatusIcon;
+			localVideoStatus.innerHTML = statusHTML;
+		}
+
+		// --- Draggable Video ---
+		const localVideoWrapper = document.getElementById('localVideoWrapper');
+		let isDragging = false;
+		let offsetX, offsetY;
+
+		localVideoWrapper.addEventListener('mousedown', (e) => {
+			isDragging = true;
+			localVideoWrapper.classList.add('dragging');
+			offsetX = e.clientX - localVideoWrapper.offsetLeft;
+			offsetY = e.clientY - localVideoWrapper.offsetTop;
+		});
+
+		document.addEventListener('mousemove', (e) => {
+			if (!isDragging) return;
+			e.preventDefault();
+			let newX = e.clientX - offsetX;
+			let newY = e.clientY - offsetY;
+
+			// Constrain to parent
+			const parentRect = videoCallView.getBoundingClientRect();
+			const selfRect = localVideoWrapper.getBoundingClientRect();
+
+			newX = Math.max(0, Math.min(newX, parentRect.width - selfRect.width));
+			newY = Math.max(0, Math.min(newY, parentRect.height - selfRect.height));
+
+			localVideoWrapper.style.left = `${newX}px`;
+			localVideoWrapper.style.top = `${newY}px`;
+			localVideoWrapper.style.bottom = 'auto';
+			localVideoWrapper.style.right = 'auto';
+		});
+
+		document.addEventListener('mouseup', () => {
+			isDragging = false;
+			localVideoWrapper.classList.remove('dragging');
+		});
+
+		// --- Initialization ---
+
+		window.addEventListener('load', async () => {
+			try {
+				await setupMedia();
+				const urlParams = new URLSearchParams(window.location.search);
+				const connectTo = urlParams.get('connect');
+				if (connectTo) {
+					document.getElementById('peerIdInput').value = connectTo;
+					setTimeout(connectToPeer, 500);
 				}
-			}
-		}
-
-		function endCall() {
-			if (currentCall) {
-				currentCall.close();
-				currentCall = null;
-			}
-
-			if (localStream) {
-				localStream.getTracks().forEach(track => track.stop());
-				localStream = null;
-			}
-
-			if (peer) {
-				peer.disconnect();
-				peer.destroy();
-				peer = null;
-			}
-
-			// Reset and reload
-			location.window.href = "https://hamza-248.github.io/Video-Calling-App/";
-		}
-
-		// Handle direct connection via URL parameter
-		window.addEventListener('load', () => {
-			const urlParams = new URLSearchParams(window.location.search);
-			const connectTo = urlParams.get('connect');
-
-			if (connectTo) {
-				document.getElementById('peerIdInput').value = connectTo;
-				// Auto-connect after a brief delay
-				setTimeout(() => {
-					connectToPeer();
-				}, 500);
+			} catch (error) {
+				console.log("Could not start media on load");
 			}
 		});
 
-		// Cleanup on page unload
-		window.addEventListener('beforeunload', () => {
-			if (currentCall) {
-				currentCall.close();
-			}
-			if (peer) {
-				peer.disconnect();
-				peer.destroy();
-			}
-		});
+		window.addEventListener('beforeunload', endCall);
+
 	</script>
 </body>
 
